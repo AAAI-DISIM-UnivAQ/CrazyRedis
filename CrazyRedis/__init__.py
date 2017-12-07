@@ -138,6 +138,7 @@ class CrazyMaster:
             self.__crazyFlie.open_link(uri)
             # Variable used to keep main loop occupied until disconnect
             self.__isConnected = True
+            print('Connected to Crazyflie.')
         else:
             print('CrazyFlie NOT found!')
 
@@ -297,7 +298,7 @@ class CrazyMaster:
         message = [sUnixTimeStamp]
         self.__crazyRedis.addToRedisQueue(queueName=queue, item=str(message))
 
-    def startLogging(self):
+    def startLogging(self, link_uri):
         '''
         Keep log data.
         You can use this function in a connection callback, because it can work after CrazyFlie connection only.
@@ -306,6 +307,7 @@ class CrazyMaster:
         # Adding the configuration cannot be done until a Crazyflie is
         # connected, since we need to check that the variables we
         # would like to log are in the TOC.
+        print('Starting Logging...')
         try:
             self.__crazyFlie.log.add_config(self.__logConf)
             # This callback will receive the data
@@ -318,16 +320,13 @@ class CrazyMaster:
             print('Could not start log configuration,'
                   '{} not found in TOC'.format(str(e)))
         except AttributeError:
-            print('Could not add Stabilizer log config, bad configuration.')
+            print('Could not add log config, bad configuration.')
         # Redis Report
         sUnixTimeStamp = int(time.time())
         queue = self.getUri() + '_startLogging'
         message = [sUnixTimeStamp]
         self.__crazyRedis.addToRedisQueue(queueName=queue, item=str(message))
-        while self.getIsConnected():  # While __crazyFlie is connected:
-            # Start a timer to disconnect in 10s
-            t = Timer(10, self.__crazyFlie.close_link)  # 10 s is the time we get logs
-            t.start()
+
 
     def loggingError(self, logconf, msg):
         """Callback from the log API when an error occurs"""
@@ -345,6 +344,21 @@ class CrazyMaster:
         queue = self.getUri() + '_' + str(logconf.name)
         message = [timestamp, data]
         self.__crazyRedis.addToRedisQueue(queueName=queue, item=str(message))
+        self.classifier(data)
+
+    def classifier(self, logData):
+        if logData['acc.z'] != None:
+            acc = logData['acc.z']
+            z = logData['range.zrange']
+            if acc > 1.2:
+                print('ACC > 1.2')
+                if z < 0.3:
+                    print('Z < 0.3')
+                    self.__crazyFlie.commander.send_stop_setpoint()
+                else:
+                    print('Z >= 0.3')
+                    self.__crazyFlie.commander.send_hover_setpoint(0, 0, 0, 1)
+            time.sleep(0.1)
 
     def connectionFailed(self, link_uri, msg):
         """Callback when connection initial connection fails (i.e no Crazyflie
@@ -376,4 +390,31 @@ class CrazyMaster:
         queue = self.getUri() + '_disconnection'
         message = [sUnixTimeStamp]
         self.__crazyRedis.addToRedisQueue(queueName=queue, item=message)
+
+
+
+# TEST
+''' # TEST
+varList = [('stabilizer.roll', 'float'),
+           ('stabilizer.pitch', 'float'),
+           ('stabilizer.yaw', 'float'),
+           ('pm.vbat', 'float'),
+           ('acc.z', 'float')]
+'''
+varList = [('range.zrange', 'float'),
+           ('acc.z', 'float')]
+cr = CrazyRedis(host='127.0.0.1', password='', db=0, port=6379, inChannel='CrazyInCh', outChannel='CrazyOutCh')
+cm = CrazyMaster('radio://0/90/2M', logName='logData', msPeriod=10, variableList=varList,
+                 crazyRedis=cr)
+cm.addCallback(eventName='Connection', callback=cm.startLogging)
+cm.addCallback(eventName='Connection', callback=cm.connected)
+cm.addCallback('ConnectionFailed', cm.connectionFailed)
+cm.connectToRedis()
+cm.connectToCrazyFlie()
+
+# The Crazyflie lib doesn't contain anything to keep the application alive,
+# so this is where your application should do something. In our case we
+# are just waiting until we are disconnected.
+while cm.getIsConnected():
+    time.sleep(1)
 
