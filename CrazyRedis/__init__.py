@@ -339,26 +339,31 @@ class CrazyMaster:
 
     def receivedLogData(self, timestamp, data, logconf):
         """Callback froma the log API when data arrives"""
+        #acc = data['acc.z']
+        z = data['range.zrange']
+        #self.controller(z, acc)
         print('[%d][%s]: %s' % (timestamp, logconf.name, data))
         # Redis Report
         queue = self.getUri() + '_' + str(logconf.name)
         message = [timestamp, data]
         self.__crazyRedis.addToRedisQueue(queueName=queue, item=str(message))
-        self.classifier(data)
+        self.stableFly()
 
-    def classifier(self, logData):
-        if logData['acc.z'] != None:
-            acc = logData['acc.z']
-            z = logData['range.zrange']
-            if acc > 1.2:
-                print('ACC > 1.2')
-                if z < 0.3:
-                    print('Z < 0.3')
-                    self.__crazyFlie.commander.send_stop_setpoint()
-                else:
-                    print('Z >= 0.3')
-                    self.__crazyFlie.commander.send_hover_setpoint(0, 0, 0, 1)
-            time.sleep(0.1)
+    def takeOff(self, z):
+        for i in range(3):
+            self.__crazyFlie.commander.send_hover_setpoint(0, 0, 0, z+(i/10))
+        self.stableFly()
+
+    def stableFly(self):
+        self.__crazyFlie.commander.send_hover_setpoint(0, 0, 0, 1)
+
+    def controller(self, z, acc):
+        if acc > 1.2:
+            if z < 1:
+                self.__crazyFlie.commander.send_stop_setpoint()
+            else:
+                self.__crazyFlie.commander.send_hover_setpoint(0, 0, 0, 1)
+        time.sleep(0.1)
 
     def connectionFailed(self, link_uri, msg):
         """Callback when connection initial connection fails (i.e no Crazyflie
@@ -404,7 +409,7 @@ varList = [('stabilizer.roll', 'float'),
 varList = [('range.zrange', 'float'),
            ('acc.z', 'float')]
 cr = CrazyRedis(host='127.0.0.1', password='', db=0, port=6379, inChannel='CrazyInCh', outChannel='CrazyOutCh')
-cm = CrazyMaster('radio://0/90/2M', logName='logData', msPeriod=10, variableList=varList,
+cm = CrazyMaster('radio://0/80/1M', logName='logData', msPeriod=100, variableList=varList,
                  crazyRedis=cr)
 cm.addCallback(eventName='Connection', callback=cm.startLogging)
 cm.addCallback(eventName='Connection', callback=cm.connected)
@@ -412,9 +417,9 @@ cm.addCallback('ConnectionFailed', cm.connectionFailed)
 cm.connectToRedis()
 cm.connectToCrazyFlie()
 
+
 # The Crazyflie lib doesn't contain anything to keep the application alive,
 # so this is where your application should do something. In our case we
 # are just waiting until we are disconnected.
-while cm.getIsConnected():
-    time.sleep(1)
-
+while True:
+    time.sleep(100000000)
